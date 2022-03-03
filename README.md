@@ -3,10 +3,15 @@
 DDoS tool with IP spoofing and ability to use parallel connections.
 Built specifically to bring russian orc websites down to their knees.
 
-## Compile command
+### Compile command
 
 ```bash
-gcc main.c -O2 -o bombard -lpthread
+make
+```
+
+### Install command
+```bash
+make install
 ```
 
 ## Usage examples
