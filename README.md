@@ -40,3 +40,20 @@ sudo ./bombard -u rg.ru/ -p 443 -c 4 -d 60
 sudo ./bombard -u https://sber.ru -c 10 -n 1000000
 ```
 
+## Notes
+
+If an error like this occurs:
+
+```bash
+$ sudo bombard -c 8 -a 192.168.4.1 -p 80
+sudo: bombard: command not found
+```
+
+It means that you need to specify the environment variable ``PATH``
+for ``sudo`` manually. To do that, use following command instead:
+
+```bash
+sudo env "PATH=$PATH" bombard -c 8 -a 192.168.4.1 -p 80
+```
+
+
