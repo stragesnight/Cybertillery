@@ -66,14 +66,15 @@ struct conn_conf
 	struct sockaddr_in cc_sin;
 };
 
-char *dst_addr;
-char *payload = NULL;
-uint16_t dst_port = 80;
-size_t ncon = 1;
-size_t npac = 0;
-size_t dur = 0;
+char *dst_addr; 		// destination address
+uint16_t dst_port = 80; 	// destination port
+char *payload = NULL; 		// packet payload
+size_t ncon = 1; 		// number of connections
+size_t npac = 0; 		// number of packets (0 = inf)
+time_t dur = 0; 		// attack duration in seconds (0 = inf)
+time_t sttime; 			// attack start time
 
-static atomic_size_t nsent = 0;
+static atomic_size_t nsent = 0; // total number of packets sent
 
 // generate a random IP address
 static in_addr_t rand_addr()
@@ -287,7 +288,7 @@ void *pthread_conn(void *args)
 // SIGINT handler
 void int_handler(int sig)
 {
-	printf("\n%lu packets sent\n", nsent);
+	printf("\n%lu packets sent in total\n", nsent);
 	exit(EXIT_SUCCESS);
 }
 
@@ -315,6 +316,7 @@ int main(int argc, char **argv)
 
 	int ok = 0;
 	int d = 0;
+	sttime = time(NULL);
 
 	// parse arguments
 	for (int i = 1; i < argc; ++i) {
@@ -363,7 +365,7 @@ int main(int argc, char **argv)
 			ncon = atoi(argv[++i]);
 			break;
 		case 'd': 	// duration
-			dur = atoi(argv[++i]);
+			dur = atoi(argv[++i]) - 1;
 			break;
 		case 'n': 	//number of packets
 			npac = atoi(argv[++i]);
@@ -393,10 +395,31 @@ int main(int argc, char **argv)
 	for (size_t i = 0; i < ncon; ++i)
 		pthread_create(&threads[i], NULL, pthread_conn, NULL);
 
-	if (dur > 0) 	// wait for the end of attack
-		sleep(dur);
-	else 		// wait for any thread to terminate
-		pthread_join(threads[0], NULL);
+	sleep(1); 		// avoid divisons by zero
+	puts("\n\n\n\n\n\n"); 	// space buffer for data
+	size_t pktlen = strlen(payload);
+	while (1) {
+		time_t t = time(NULL);
+		time_t tdiff = time(NULL) - sttime;
+		uint8_t s = tdiff % 60;
+		uint8_t m = (tdiff / 60) % 60;
+		uint8_t h = tdiff / 3600;
+		size_t pps = nsent / tdiff;
+		size_t kibps = (pps * pktlen) / 1024;
+
+		puts("\033[6A\rattack statistics:");
+		printf("time elapsed:\t\t%02u:%02u:%02u\n", h, m, s);
+		printf("total packets sent:\t%lu\n", nsent);
+		printf("throughput (packets):\t%lu packets/sec       \n", pps);
+		printf("throughput (data):\t%lu KiB/sec          \n\n", kibps);
+
+		// wait for the next second
+		while (t == time(NULL))
+			usleep(1000);
+
+		if (dur != 0 && tdiff >= dur)
+			break;
+	}
 
 	// free resources and exit
 	for (size_t i = 0; i < ncon; ++i)
