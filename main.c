@@ -397,7 +397,8 @@ int main(int argc, char **argv)
 
 	sleep(1); 		// avoid divisons by zero
 	puts("\n\n\n\n\n\n"); 	// space buffer for data
-	size_t pktlen = strlen(payload);
+	
+	size_t pktlen = sizeof(struct tcp_pkt) - (PAYLOAD_LEN - strlen(payload));
 	while (1) {
 		time_t t = time(NULL);
 		time_t tdiff = time(NULL) - sttime;
